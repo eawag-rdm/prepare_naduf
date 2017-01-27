@@ -1,5 +1,10 @@
 import ckanapi
 import os
+from xlsxtocsv import xlsxtocsv, rfc4180
+from xlsxtocsv import rfc4180
+import tempfile
+import csv
+
 # _*_ coding: utf-8 _*_
 
 # measurement methods
@@ -10,7 +15,6 @@ class PrepareNADUF(object):
         #self.remote = 'https://eaw-ckan-dev1.eawag.wroot.emp-eaw.ch'
         self.remote = 'http://localhost:5000'
         self.targetdir = './upload'
-        self.tmpdir = './tmp'
         self.staging_dir = './staging'
         self.metadata = metadata
         
@@ -34,16 +38,37 @@ class PrepareNADUF(object):
             return {'id': self.metadata.get('id', None) or
                     self.metadata['name']}
         return self.metadata
-
     
+    def extract_xlsx(self, xlsxfile):
+        out_dir = tempfile.mkdtemp(dir=self.targetdir)
+        xlsxtocsv.main(os.path.join(self.staging_dir, xlsxfile), out_dir)
+        return out_dir
+
+    def extract_subtable(self, csvfile, row1, row2, col1, col2):
+        res = []
+        with open(csvfile, 'rb') as f:
+            readr = csv.reader(f, dialect='RFC4180')
+            for i in range(0, 30):
+                print(readr.next())
+                
+            
+        
+        
+        
+
+    def apply_trafos(self, trans):
+        for t in trans:
+            expression = ('self.' + '(self.'.join(t['trans'][::-1]) +
+                          '("' + t['source'] + '"' + (len(t['trans']))*')')
+            eval(expression)
         
 # Maps pathnames of source files to a list of transformation
 # functions, a function that returns a dict of resource-metadata,
 # and the final filename (to be written below self.targetdir)
-copymap = {'Messmethoden/methods NADUF-english.pdf': {
-    'transform': [],
-    'target': 'methods_chemical_analysis.pdf',
-    }
+# copymap = {'Messmethoden/methods NADUF-english.pdf': {
+#     'transform': [],
+#     'target': 'methods_chemical_analysis.pdf',
+#     }
 
 
 metadata = {
@@ -90,8 +115,15 @@ projects.''',
 
 P = PrepareNADUF(metadata)
 #P.action('package_create')
-P.action('package_update')
+#P.action('package_update')
 #P.action('package_delete')
 #P.action('dataset_purge')
 
-    
+transformations = [
+    {'source': 'Stationen/Stationszusammenstellung Jan17.xlsx',
+     'trans': ['extract_xlsx']}] 
+#t = P.extract_xlsx('source')
+#res = P.apply_trafos(transformations)   
+fi = './upload/tmp7aT3kH/Stationszusammenstellung Jan17_Bemerkungen_Quellen.csv'
+res = P.extract_subtable(fi,5,10,0,0)
+print res
