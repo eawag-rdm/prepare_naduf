@@ -7,6 +7,8 @@ import csv
 import shutil
 import subprocess as sp
 import io
+import glob
+import sys
 import cStringIO
 
 # _*_ coding: utf-8 _*_
@@ -88,11 +90,22 @@ class PrepareNADUF(object):
         shutil.copyfile(src, target)
         print('Copied {}\n->{}'.format(src, target))
         return target
+
+    def getpaths(self, pattern):
+        fullpaths = glob.iglob(os.path.join(self.srcdir, pattern))
+        return [os.path.relpath(fu,self.srcdir) for fu in fullpaths]
+
+    def mktmpdir(self):
+        return os.path.relpath(tempfile.mkdtemp(dir=self.tmpdir), self.tmpdir)
     
-    def extract_xlsx(self, xlsxfile):
-        out_dir = tempfile.mkdtemp(dir=self.tmpdir)
+    def extract_xlsx(self, xlsxfile, sheets=None, tmpdir=None):
+        if tmpdir:
+            out_dir = os.path.join(self.tmpdir, tmpdir)
+        else:
+            out_dir = tempfile.mkdtemp(dir=self.tmpdir)
         print('Extracting data from {} ...'.format(xlsxfile))
-        xlsxtocsv.main(os.path.join(self.srcdir, xlsxfile), out_dir)
+        xlsxtocsv.main(os.path.join(self.srcdir, xlsxfile),
+                                    out_dir, sheets=sheets)
         return out_dir
 
     def extract_subtable(self, csvfile, row1=None, row2=None,
@@ -126,16 +139,18 @@ class PrepareNADUF(object):
         res_t = res_t[col1-1:col2]
         res = zip(*res_t)
 
-        suffix = '.txt' if totxt else '.csv'
-        outfile = (os.path.basename(csvfile).partition(suffix)[0]
-                   + '_{}_{}_{}_{}.csv'.format(str(row1), str(row2),
-                                             str(col1), str(col2)))
-        outfilepath =  os.path.join(self.tmpdir, outfile)
+        suffix = 'txt' if totxt else 'csv'
+        outfile = (os.path.basename(csvfile).partition('.csv')[0]
+                   + '_{}_{}_{}_{}.{}'.format(str(row1), str(row2),
+                                              str(col1), str(col2), suffix))
+        outfilepath =  os.path.join(os.path.dirname(csvfile), outfile)
         with io.open(outfilepath, 'bw') as o:
             if totxt:
-                res = [' '.join(l) for l in res]
-            wr = csv.writer(o, dialect='RFC4180')
-            wr.writerows(res)    
+                res = [' '.join(l) + '\r\n' for l in res]
+                o.writelines(res)
+            else:
+                wr = csv.writer(o, dialect='RFC4180')
+                wr.writerows(res)    
         print('wrote {}'.format(outfile))
         return outfilepath
 
@@ -207,40 +222,53 @@ P = PrepareNADUF(metadata, '/home/vonwalha/rdm/data/preparation/naduf')
 # dmain1_tmp = P.extract_xlsx('Messdaten/Jahresmittel-2.xlsx')
 
 ## station information
-dstations_tmp = P.extract_xlsx('Stationen/Stationszusammenstellung Jan17.xlsx')
+# dstations_tmp = P.extract_xlsx('Stationen/Stationszusammenstellung Jan17.xlsx')
 
+dnotes = P.mktmpdir()
+
+for f in P.getpaths('Hauptfiles (Instrument für mich)/*.xlsx'):
+    print f
+    dstations_notes = P.extract_xlsx(f, sheets=['Stoerungen','Logsheet'], tmpdir=dnotes)
+    print(f)
+
+sys.exit()
 
 ## copy files:
-# ftocopy = [(P.check_pdf_A('Messmethoden/methods NADUF-english.pdf'),
-#             'methods_chemmical_analysis.pdf'),
-#            (P.check_pdf_A('ReadMe.pdf'), 'README.pdf'),
-#            (os.path.join(dmain_tmp, 'Daten 2015_Onelinemessung.csv'),
-#             'hourly_measurements_1990-1998.csv'),
-#            (os.path.join(dmain_tmp, 'Daten 2015_Originaldaten.csv'),
-#             'measurements_raw.csv'),
-#            (os.path.join(dmain_tmp, 'Daten 2015_14tg_Daten.csv'),
-#             'measurements_raw.csv'),
-#            (os.path.join(dmain_tmp, 'Daten 2015_14tg_Daten.csv'),
-#             'measurements_biweekly.csv'),
-#            (os.path.join(dmain1_tmp, 'Jahresmittel-2_Sheet1.csv'),
-#             'measurements_annual.csv'),
-#            (os.path.join(dstations_tmp,
-#                          'Stationszusammenstellung Jan17_Allgemeine_Daten.csv'),
-#                          'stations_description.csv'),
-#            ]
 ftocopy = [
+    (P.check_pdf_A('Messmethoden/methods NADUF-english.pdf'),
+     'methods_chemical_analysis.pdf'),
+    (P.check_pdf_A('ReadMe.pdf'), 'measurements_notes.pdf'),
+    (os.path.join(dmain_tmp, 'Daten 2015_Onelinemessung.csv'),
+     'hourly_measurements_1990-1998.csv'),
+    (os.path.join(dmain_tmp, 'Daten 2015_Originaldaten.csv'),
+     'measurements_raw.csv'),
+    (os.path.join(dmain_tmp, 'Daten 2015_14tg_Daten.csv'),
+     'measurements_raw.csv'),
+    (os.path.join(dmain_tmp, 'Daten 2015_14tg_Daten.csv'),
+     'measurements_biweekly.csv'),
+    (os.path.join(dmain1_tmp, 'Jahresmittel-2_Sheet1.csv'),
+     'measurements_annual.csv'),
+    (os.path.join(dstations_tmp,
+                  'Stationszusammenstellung Jan17_Allgemeine_Daten.csv'),
+     'stations_description.csv'),
     (P.extract_subtable(
         os.path.join(dstations_tmp,
                      'Stationszusammenstellung Jan17_Bemerkungen_Quellen.csv'),
-        8, 19, 1, 4),'stations_description_legend.csv'),
+        7, 18, 1, 4),'stations_description_legend.csv'),
     (P.extract_subtable(
         os.path.join(dstations_tmp,
                      'Stationszusammenstellung Jan17_Bemerkungen_Quellen.csv'),
-        22, 39, 1, 3),'stations_description_sources.csv'),
+        21, 38, 1, 3),'stations_description_sources.csv'),
     (P.extract_subtable(
         os.path.join(dstations_tmp,
                      'Stationszusammenstellung Jan17_Bemerkungen_Quellen.csv'),
-        1, 5, 1, 1, totxt=True),'stations_description_sources.txt'),
+        1, 5, 1, 1, totxt=True),'stations_description_notes.txt'),
+    (os.path.join(dstations_tmp,
+                  'Stationszusammenstellung Jan17_Klassifikation_AS_CH.csv'),
+     'stations_description_arealstats_mapping_CH.csv'),
+    (os.path.join(dstations_tmp,
+                  'Stationszusammenstellung Jan17_Klassifikation_AS_EU.csv'),
+     'stations_description_arealstats_mapping_EU.csv'),
     
 ]
 
