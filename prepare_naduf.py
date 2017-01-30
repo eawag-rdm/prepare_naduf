@@ -4,18 +4,34 @@ from xlsxtocsv import xlsxtocsv, rfc4180
 from xlsxtocsv import rfc4180
 import tempfile
 import csv
+import shutil
+import subprocess as sp
+import io
+import cStringIO
 
 # _*_ coding: utf-8 _*_
+
+
+## Curently this requires a script "pda2pdfa" that conevrts PDF to PDF/A-1b
+## Here we use:
+## gs -dPDFA -dBATCH -dNOPAUSE -sProcessColorModel=DeviceCMYK -sDEVICE=pdfwrite \
+## -sPDFACompatibilityPolicy=1 -sOutputFile="$outfile" "$infile"
+
+## Curently this requires a script pdfa_vali" that validates against PDF/A-1b.
+## Here we use:
+## java -jar $HOME/java/lib/preflight-app-2.0.4.jar "$1"
+
 
 # measurement methods
 
 class PrepareNADUF(object):
-    def __init__(self, metadata):
+    def __init__(self, metadata, basedir):
         self.apikey = self.get_apikey()
         #self.remote = 'https://eaw-ckan-dev1.eawag.wroot.emp-eaw.ch'
         self.remote = 'http://localhost:5000'
-        self.targetdir = './upload'
-        self.staging_dir = './staging'
+        self.targetdir = os.path.join(basedir, 'upload')
+        self.srcdir = os.path.join(basedir,'staging')
+        self.tmpdir = os.path.join(basedir, 'tmp')
         self.metadata = metadata
         
         self.connection = self.connect()
@@ -38,23 +54,90 @@ class PrepareNADUF(object):
             return {'id': self.metadata.get('id', None) or
                     self.metadata['name']}
         return self.metadata
+
+    def check_pdf_A(self, pdffile):
+        pdffilepath = os.path.join(self.srcdir, pdffile)
+        try:
+            res = sp.check_output(['pdfa_vali', pdffilepath])
+        except sp.CalledProcessError:
+            print('{} is not valid PDF/A-1b. trying to convert ...'
+                  .format(pdffile))
+            return self.pdf2pdfa(pdffile)
+        else:
+            return pdffile
+
+    def pdf2pdfa(self, pdffile):
+        pdffilepath = os.path.join(self.srcdir, pdffile)
+        try:
+            res = io.BufferedReader(io.BytesIO(sp.check_output(['pdf2pdfa',
+                                                      pdffilepath, '-'])))
+        except sp.CalledProcessError as e:
+            print('Conversion of {} tp PDF/A failed')
+            raise(e)
+        else:
+            outfile = os.path.basename(pdffile).partition('.pdf')[0] + '_A.pdf'
+            outfilepath =  os.path.join(self.tmpdir, outfile)
+            with io.open(outfilepath, 'bw') as o:
+                o.write(res.read())
+            print('converted {} to PDF/A'.format(pdffile, outfile))
+            return(outfilepath)
+                
+    def cpfile(self, source, dest):
+        src = os.path.join(self.srcdir, source)
+        target = os.path.join(self.targetdir, dest)
+        shutil.copyfile(src, target)
+        print('Copied {}\n->{}'.format(src, target))
+        return target
     
     def extract_xlsx(self, xlsxfile):
-        out_dir = tempfile.mkdtemp(dir=self.targetdir)
-        xlsxtocsv.main(os.path.join(self.staging_dir, xlsxfile), out_dir)
+        out_dir = tempfile.mkdtemp(dir=self.tmpdir)
+        print('Extracting data from {} ...'.format(xlsxfile))
+        xlsxtocsv.main(os.path.join(self.srcdir, xlsxfile), out_dir)
         return out_dir
 
-    def extract_subtable(self, csvfile, row1, row2, col1, col2):
+    def extract_subtable(self, csvfile, row1=None, row2=None,
+                         col1=None, col2=None, totxt=False):
+        
+        """Extracts a rectangular area from CSV - table.  Coordinate parameter
+        with value None are interpreted to yield the maximum possible
+        size of the recatangle.
+
+        Indices start with 1.
+
+        If totxt=True, rows will be concatenated and written into a .txt file.
+        """
+        
         res = []
+        row1 = row1 or 1
+        col1 = col1 or 1
         with open(csvfile, 'rb') as f:
             readr = csv.reader(f, dialect='RFC4180')
-            for i in range(0, 30):
-                print(readr.next())
-                
-            
-        
-        
-        
+            for c, row in enumerate(readr):
+                if c + 1 < row1:
+                    continue
+                elif (row2 is not None) and (c + 1 > row2):
+                    continue   # not breaking just to count lines
+                else:
+                    if [x for x in row if x]: 
+                        res.append(row)
+            row2 = row2 or readr.line_num
+        res_t = zip(*res)
+        col2 = col2 or len(res_t)
+        res_t = res_t[col1-1:col2]
+        res = zip(*res_t)
+
+        suffix = '.txt' if totxt else '.csv'
+        outfile = (os.path.basename(csvfile).partition(suffix)[0]
+                   + '_{}_{}_{}_{}.csv'.format(str(row1), str(row2),
+                                             str(col1), str(col2)))
+        outfilepath =  os.path.join(self.tmpdir, outfile)
+        with io.open(outfilepath, 'bw') as o:
+            if totxt:
+                res = [' '.join(l) for l in res]
+            wr = csv.writer(o, dialect='RFC4180')
+            wr.writerows(res)    
+        print('wrote {}'.format(outfile))
+        return outfilepath
 
     def apply_trafos(self, trans):
         for t in trans:
@@ -113,17 +196,59 @@ projects.''',
 
 
 
-P = PrepareNADUF(metadata)
+P = PrepareNADUF(metadata, '/home/vonwalha/rdm/data/preparation/naduf')
 #P.action('package_create')
 #P.action('package_update')
 #P.action('package_delete')
 #P.action('dataset_purge')
 
-transformations = [
-    {'source': 'Stationen/Stationszusammenstellung Jan17.xlsx',
-     'trans': ['extract_xlsx']}] 
-#t = P.extract_xlsx('source')
-#res = P.apply_trafos(transformations)   
-fi = './upload/tmp7aT3kH/Stationszusammenstellung Jan17_Bemerkungen_Quellen.csv'
-res = P.extract_subtable(fi,5,10,0,0)
-print res
+## main data
+# dmain_tmp = P.extract_xlsx('Messdaten/Daten 2015.xlsx')
+# dmain1_tmp = P.extract_xlsx('Messdaten/Jahresmittel-2.xlsx')
+
+## station information
+dstations_tmp = P.extract_xlsx('Stationen/Stationszusammenstellung Jan17.xlsx')
+
+
+## copy files:
+# ftocopy = [(P.check_pdf_A('Messmethoden/methods NADUF-english.pdf'),
+#             'methods_chemmical_analysis.pdf'),
+#            (P.check_pdf_A('ReadMe.pdf'), 'README.pdf'),
+#            (os.path.join(dmain_tmp, 'Daten 2015_Onelinemessung.csv'),
+#             'hourly_measurements_1990-1998.csv'),
+#            (os.path.join(dmain_tmp, 'Daten 2015_Originaldaten.csv'),
+#             'measurements_raw.csv'),
+#            (os.path.join(dmain_tmp, 'Daten 2015_14tg_Daten.csv'),
+#             'measurements_raw.csv'),
+#            (os.path.join(dmain_tmp, 'Daten 2015_14tg_Daten.csv'),
+#             'measurements_biweekly.csv'),
+#            (os.path.join(dmain1_tmp, 'Jahresmittel-2_Sheet1.csv'),
+#             'measurements_annual.csv'),
+#            (os.path.join(dstations_tmp,
+#                          'Stationszusammenstellung Jan17_Allgemeine_Daten.csv'),
+#                          'stations_description.csv'),
+#            ]
+ftocopy = [
+    (P.extract_subtable(
+        os.path.join(dstations_tmp,
+                     'Stationszusammenstellung Jan17_Bemerkungen_Quellen.csv'),
+        8, 19, 1, 4),'stations_description_legend.csv'),
+    (P.extract_subtable(
+        os.path.join(dstations_tmp,
+                     'Stationszusammenstellung Jan17_Bemerkungen_Quellen.csv'),
+        22, 39, 1, 3),'stations_description_sources.csv'),
+    (P.extract_subtable(
+        os.path.join(dstations_tmp,
+                     'Stationszusammenstellung Jan17_Bemerkungen_Quellen.csv'),
+        1, 5, 1, 1, totxt=True),'stations_description_sources.txt'),
+    
+]
+
+           
+for f in ftocopy:
+    P.cpfile(f[0], f[1])
+           
+           # csvfile = '/home/vonwalha/rdm/data/preparation/naduf/upload/stations_description.csv'
+           # row1 = 26
+           # row2 = None
+           # res = P.extract_subtable(csvfile, row1, row2, 3, None)
