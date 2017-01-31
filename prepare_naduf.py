@@ -1,7 +1,6 @@
 import ckanapi
 import os
 from xlsxtocsv import xlsxtocsv, rfc4180
-from xlsxtocsv import rfc4180
 import tempfile
 import csv
 import shutil
@@ -35,6 +34,7 @@ class PrepareNADUF(object):
         self.srcdir = os.path.join(basedir,'staging')
         self.tmpdir = os.path.join(basedir, 'tmp')
         self.metadata = metadata
+        rfc4180.RFC4180() # register dialect
         
         self.connection = self.connect()
         
@@ -107,6 +107,33 @@ class PrepareNADUF(object):
         xlsxtocsv.main(os.path.join(self.srcdir, xlsxfile),
                                     out_dir, sheets=sheets)
         return out_dir
+    
+    def check_column_compat(self, basedir, pattern):
+        """Checks whether a set of csv files has the same column headings.
+        pattern is a glob - pattern relative to the one indicated by basedir:
+        tmpdir: self.tmpdir
+        srcdir: self.srcdir
+        targetdir: self.targetdir
+        """
+        pattern = eval('os.path.join(self.{}, pattern)'.format(basedir))
+        print('Checking compatibility of headers for {}'.format(pattern))
+        checklist = {}
+        for fn in glob.glob(pattern):
+            fbase = os.path.basename(fn)
+            with open(fn, 'rb') as f:
+                checklist[fbase] = tuple(csv.reader(f, dialect='RFC4180').next())
+        headerset = set(checklist.values())
+        if len(headerset) > 1:
+            print('Incompatibilies detected:')
+            incomp = {}
+            for header in headerset:
+                incfiles = [k for k in checklist if checklist[k] == header]
+                incomp.setdefault(header, []).extend(incfiles)
+            print(incomp)
+            print(len(incomp))
+        
+        
+
 
     def extract_subtable(self, csvfile, row1=None, row2=None,
                          col1=None, col2=None, totxt=False):
@@ -224,12 +251,12 @@ P = PrepareNADUF(metadata, '/home/vonwalha/rdm/data/preparation/naduf')
 ## station information
 # dstations_tmp = P.extract_xlsx('Stationen/Stationszusammenstellung Jan17.xlsx')
 
-dnotes = P.mktmpdir()
+# notes = P.mktmpdir()
 
-for f in P.getpaths('Hauptfiles (Instrument für mich)/*.xlsx'):
-    print f
-    dstations_notes = P.extract_xlsx(f, sheets=['Stoerungen','Logsheet'], tmpdir=dnotes)
-    print(f)
+# for f in P.getpaths('Hauptfiles (Instrument für mich)/*.xlsx'):
+#     P.extract_xlsx(f, sheets=['Stoerungen','Logsheet'], tmpdir=dnotes)
+
+P.check_column_compat('tmpdir', os.path.join(dnotes, '*Stoerungen.csv'))
 
 sys.exit()
 
