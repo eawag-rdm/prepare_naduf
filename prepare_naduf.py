@@ -98,7 +98,7 @@ class PrepareNADUF(object):
     def mktmpdir(self):
         return os.path.relpath(tempfile.mkdtemp(dir=self.tmpdir), self.tmpdir)
     
-    def extract_xlsx(self, xlsxfile, sheets=None, tmpdir=None):
+    def extract_xlsx(self, xlsxfile, sheets=None, tmpdir=None, strip=False):
         if tmpdir:
             out_dir = os.path.join(self.tmpdir, tmpdir)
         else:
@@ -107,6 +107,22 @@ class PrepareNADUF(object):
         xlsxtocsv.main(os.path.join(self.srcdir, xlsxfile),
                                     out_dir, sheets=sheets)
         return out_dir
+
+    def strip_csv(self, basedir, pattern):
+        pattern = eval('os.path.join(self.{}, pattern)'.format(basedir))
+        for csvfile in glob.glob(pattern):
+            ftmp = tempfile.SpooledTemporaryFile(max_size=1048576, mode='w+b')
+            tmpwriter = csv.writer(ftmp, dialect='RFC4180')
+            with open(csvfile, 'rb') as f:
+                for row in csv.reader(f, dialect='RFC4180'):
+                    if all([c == '' for c in row]):
+                        continue
+                    tmpwriter.writerow([c.strip() if isinstance(c, basestring)
+                                        else c for c in row ])
+            ftmp.flush()
+            ftmp.seek(0)
+            with open(csvfile, 'wb') as f:
+                shutil.copyfileobj(ftmp, f)
     
     def check_column_compat(self, basedir, pattern):
         """Checks whether a set of csv files has the same column headings.
@@ -251,12 +267,14 @@ P = PrepareNADUF(metadata, '/home/vonwalha/rdm/data/preparation/naduf')
 ## station information
 # dstations_tmp = P.extract_xlsx('Stationen/Stationszusammenstellung Jan17.xlsx')
 
-# notes = P.mktmpdir()
+dnotes = P.mktmpdir()
 
-# for f in P.getpaths('Hauptfiles (Instrument für mich)/*.xlsx'):
-#     P.extract_xlsx(f, sheets=['Stoerungen','Logsheet'], tmpdir=dnotes)
+for f in P.getpaths('Hauptfiles (Instrument für mich)/*.xlsx'):
+    P.extract_xlsx(f, sheets=['Stoerungen','Logsheet'], tmpdir=dnotes)
+P.strip_csv('tmpdir', os.path.join(dnotes, '*.csv'))
 
 P.check_column_compat('tmpdir', os.path.join(dnotes, '*Stoerungen.csv'))
+P.check_column_compat('tmpdir', os.path.join(dnotes, '*Logsheet.csv'))
 
 sys.exit()
 
@@ -300,8 +318,8 @@ ftocopy = [
 ]
 
            
-for f in ftocopy:
-    P.cpfile(f[0], f[1])
+# for f in ftocopy:
+#     P.cpfile(f[0], f[1])
            
            # csvfile = '/home/vonwalha/rdm/data/preparation/naduf/upload/stations_description.csv'
            # row1 = 26
