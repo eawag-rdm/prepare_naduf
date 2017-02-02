@@ -181,10 +181,11 @@ class PrepareNADUF(object):
         srcdir: self.srcdir
         targetdir: self.targetdir
         """
-        print('Checking compatibility of headers for {}'.format(pattern))
+        print('Checking compatibility of headers for')
         checklist = {}
         for fn in csvfiles:
             fbase = os.path.basename(fn)
+            print(fbase)
             with open(fn, 'rb') as f:
                 checklist[fbase] = tuple(csv.reader(f, dialect='RFC4180').next())
         headerset = set(checklist.values())
@@ -196,7 +197,23 @@ class PrepareNADUF(object):
                 incomp.setdefault(header, []).extend(incfiles)
             print(incomp)
             print(len(incomp))
-        
+
+    def cat_csv(self, csvfiles, outfilename):
+        """Concatenates the files in csvfiles.
+        No sanity checks. have to be done beforehand.
+        """
+        tmpd = os.path.join(self.tmpdir, self.mktmpdir())
+        ofpath = os.path.join(tmpd, outfilename)
+        with open(csvfiles[0], 'r') as f:
+            header = f.readline()
+        with open(ofpath, 'w') as f:
+            f.write(header)
+            for csvf in csvfiles:
+                with open(csvf, 'r') as srcfile:
+                    srcfile.readline()
+                    f.writelines(srcfile.readlines())
+        return ofpath
+    
     def extract_subtable(self, csvfile, row1=None, row2=None,
                          col1=None, col2=None, totxt=False):
         
@@ -274,18 +291,18 @@ stations_description_legend = P.extract_subtable(
     P.get_files('tmpdir', os.path.join(dstations_tmp, '*Quellen*.csv')),
     7, 18, 1, 4)
 P.strip_csv(stations_description_legend)
+P.crop_csv(stations_description_legend)
 
 stations_description_sources = P.extract_subtable(
     P.get_files('tmpdir', os.path.join(dstations_tmp, '*Quellen.csv')),
     21, 38, 1, 3)
 P.strip_csv(stations_description_sources)
+P.crop_csv(stations_description_sources)
 
 stations_description_notes = P.extract_subtable(
     P.get_files('tmpdir', os.path.join(dstations_tmp, '*Quellen.csv')),
     1, 5, 1, 1, totxt=True)
  
-#XXX
-
 P.strip_csv(
     P.get_files('tmpdir', os.path.join(dstations_tmp, '*Allgemeine*.csv'))
     + P.get_files('tmpdir', os.path.join(dstations_tmp, '*Klassifikation*.csv')))
@@ -294,7 +311,7 @@ P.crop_csv(
     P.get_files('tmpdir', os.path.join(dstations_tmp, '*Allgemeine*.csv'))
     + P.get_files('tmpdir', os.path.join(dstations_tmp, '*Klassifikation*.csv')))
 
-
+## Logfiles and Stoerungen
 dnotes = P.mktmpdir()
 
 P.extract_xlsx(
@@ -302,13 +319,16 @@ P.extract_xlsx(
     sheets=['Stoerungen','Logsheet'], tmpdir=dnotes)
     
 P.strip_csv(P.get_files('tmpdir', os.path.join(dnotes, '*.csv')))
+P.crop_csv(P.get_files('tmpdir', os.path.join(dnotes, '*.csv')))
 
-P.check_column_compat(P.get_files('tmpdir',
-                                  os.path.join(dnotes, '*Stoerungen.csv')))
-P.check_column_compat(P.get_files('tmpdir',
-                                  os.path.join(dnotes, '*Logsheet.csv')))
-
-sys.exit()
+P.check_column_compat(
+    P.get_files('tmpdir', os.path.join(dnotes, '*Stoerungen.csv')))
+P.check_column_compat(
+    P.get_files('tmpdir', os.path.join(dnotes, '*Logsheet.csv')))
+logfile = P.cat_csv(
+    P.get_files('tmpdir', os.path.join(dnotes, '*Logsheet.csv')), 'log.csv')
+stoerfile = P.cat_csv(
+    P.get_files('tmpdir', os.path.join(dnotes, '*Stoerungen.csv')), 'stoer.csv')
 
 ## copy files:
 ftocopy = [
@@ -357,46 +377,3 @@ ftocopy = [
            # row1 = 26
            # row2 = None
            # res = P.extract_subtable(csvfile, row1, row2, 3, None)
-metadata = {
-    'id': 'naduf',
-    'name': 'naduf',
-    'title': 'NADUF – National long-term surveillance of Swiss rivers',
-    'notes': '''The "National Long-term Surveillance of Swiss Rivers" (NADUF)
-program was initiated in 1972 as a cooperative project between three
-institutes: the [Federal Office for the Environment
-(BAFU)](https://www.bafu.admin.ch/index.html?lang=en), the Swiss
-Federal Institute of Aquatic Science and Technology (EAWAG) and since
-2003 the [Swiss Federal Institute for Forest, Snow and Landscape
-Research (WSL)](http://www.wsl.ch/index_EN).
-
-With the NADUF program, the chemical-physical state of Swiss rivers as
-well as intermediate-term and long-term changes in concentration are
-observed. Furthermore, it provides data for scientific studies on
-biological, chemical and physical processes in river water. The NADUF
-network serves as a basic data and sampling facility to evaluate the
-effectiveness of water protection measures and for various scientific
-projects.''',
-    'keywords': ['none'],
-    'variables': ['none'],
-    'generic-terms': ['none'],
-    'systems': ['none'],
-    'taxa': None,
-    'substances': None,
-    'timerange': '2017 TO 2222',
-    'spatial': '{}',
-    'geographic_name': None,
-    'owner_org': 'water-resources-and-drinking-water',
-    'private': False,
-    'status': 'incomplete',
-    'author': ['Ursula Schönenberger <ursula.schoenenberger@eawag.ch>',
-               'Stephan Hug <stephan.hug@eawag.ch>'],
-    'maintainer': 'Ursula Schönenberger <ursula.schoenenberger@eawag.ch>',
-    'usage_contact': 'Ursula Schönenberger <ursula.schoenenberger@eawag.ch>',
-    'open_data': ['open_data', 'doi_wanted', 'long_term_archive'],
-    'groups': [{'name': 'naduf-national-long-term-surveillance-of-swiss-rivers'}],
-    
-}
-
-with open('metadata.json', 'w') as f:
-    json.dump(metadata, f, indent=4, separators=(',', ':'))
-
