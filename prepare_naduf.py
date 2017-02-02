@@ -9,6 +9,7 @@ import io
 import glob
 import sys
 import cStringIO
+import json
 
 # _*_ coding: utf-8 _*_
 
@@ -26,14 +27,14 @@ import cStringIO
 # measurement methods
 
 class PrepareNADUF(object):
-    def __init__(self, metadata, basedir):
+    def __init__(self, basedir):
         self.apikey = self.get_apikey()
         #self.remote = 'https://eaw-ckan-dev1.eawag.wroot.emp-eaw.ch'
         self.remote = 'http://localhost:5000'
         self.targetdir = os.path.join(basedir, 'upload')
         self.srcdir = os.path.join(basedir,'staging')
         self.tmpdir = os.path.join(basedir, 'tmp')
-        self.metadata = metadata
+        self.metadata = json.load(open('metadata.json', 'r'))
         rfc4180.RFC4180() # register dialect
         
         self.connection = self.connect()
@@ -91,50 +92,98 @@ class PrepareNADUF(object):
         print('Copied {}\n->{}'.format(src, target))
         return target
 
-    def getpaths(self, pattern):
-        fullpaths = glob.iglob(os.path.join(self.srcdir, pattern))
-        return [os.path.relpath(fu,self.srcdir) for fu in fullpaths]
+    def get_files(self, basedir, pattern, relative=False):
+        """
+        Returns absolute paths (relative=False) or paths relative
+        to basedir (relative=True) determined by basedir and pattern.
+
+        pattern is a glob-pattern relative to the one indicated by basedir:
+        'tmpdir': self.tmpdir
+        'srcdir': self.srcdir
+        'targetdir': self.targetdir
+        """
+        pattern = eval('os.path.join(self.{}, pattern)'.format(basedir))
+        fs = glob.glob(pattern)
+        if not relative:
+            return fs
+        else:
+            return [os.path.relpath(f, self.srcdir) for f in fs]
 
     def mktmpdir(self):
         return os.path.relpath(tempfile.mkdtemp(dir=self.tmpdir), self.tmpdir)
     
-    def extract_xlsx(self, xlsxfile, sheets=None, tmpdir=None, strip=False):
+    def extract_xlsx(self, xlsxfiles, sheets=None, tmpdir=None, strip=False):
+        if not type(xlsxfiles) == list:
+            xlsxfiles = [xlsxfiles]
         if tmpdir:
             out_dir = os.path.join(self.tmpdir, tmpdir)
         else:
             out_dir = tempfile.mkdtemp(dir=self.tmpdir)
-        print('Extracting data from {} ...'.format(xlsxfile))
-        xlsxtocsv.main(os.path.join(self.srcdir, xlsxfile),
-                                    out_dir, sheets=sheets)
-        return out_dir
+        for xlsxfile in xlsxfiles:
+            print('Extracting data from {} ...'.format(xlsxfile))
+            xlsxtocsv.main(xlsxfile, out_dir, sheets=sheets)
+        return os.path.basename(out_dir)
 
-    def strip_csv(self, basedir, pattern):
-        pattern = eval('os.path.join(self.{}, pattern)'.format(basedir))
-        for csvfile in glob.glob(pattern):
+    def strip_csv(self, csvfiles, killemptyrows=True):
+        """Strips leading and trailing whitespace from cells.
+        csvfiles is the list of abs. paths to operate on.
+        Also removes rows with no data.
+        Files are overwritten.
+        pattern is a glob - pattern relative to the one indicated by basedir:
+        'tmpdir': self.tmpdir
+        'srcdir': self.srcdir
+        'targetdir': self.targetdir
+        """
+        if not type(csvfiles) == list:
+            csvfiles = [csvfiles]
+        for csvf in csvfiles:
+            print('{}:\nStripping leading and trailing whitespace from cells'
+                  .format(os.path.basename(csvf)))
             ftmp = tempfile.SpooledTemporaryFile(max_size=1048576, mode='w+b')
             tmpwriter = csv.writer(ftmp, dialect='RFC4180')
-            with open(csvfile, 'rb') as f:
-                for row in csv.reader(f, dialect='RFC4180'):
-                    if all([c == '' for c in row]):
+            with open(csvf, 'rb') as f:
+                for i, row in enumerate(csv.reader(f, dialect='RFC4180')):
+                    if killemptyrows and all([c == '' for c in row]):
+                        print('{}:\nremoved empty line {}\n'
+                              .format(os.path.basename(csvf), i))
                         continue
                     tmpwriter.writerow([c.strip() if isinstance(c, basestring)
                                         else c for c in row ])
             ftmp.flush()
             ftmp.seek(0)
-            with open(csvfile, 'wb') as f:
+            with open(csvf, 'wb') as f:
                 shutil.copyfileobj(ftmp, f)
-    
-    def check_column_compat(self, basedir, pattern):
+
+    def crop_csv(self, csvfiles):
+        """Strips columns that contain only empty cells."""
+        if not type(csvfiles) == list:
+            csvfiles = [csvfiles]
+        for csvf in csvfiles:
+            print('{}:\nremoving empty columns'.format(os.path.basename(csvf)))
+            with open(csvf, 'rb') as f:
+                table = [row for row in csv.reader(f, dialect='RFC4180')]
+            table_inv = zip(*table)
+            goodcols = []
+            for i, col in enumerate(table_inv):
+                if all([c == '' for c in col]):
+                    print('removing empty column {}'.format(i))
+                    continue
+                goodcols.append(i)
+            table_inv = [table_inv[i] for i in goodcols]
+            table = zip(*table_inv)
+            with open(csvf, 'wb') as f:
+                csv.writer(f, dialect='RFC4180').writerows(table)
+            
+    def check_column_compat(self, csvfiles):
         """Checks whether a set of csv files has the same column headings.
         pattern is a glob - pattern relative to the one indicated by basedir:
         tmpdir: self.tmpdir
         srcdir: self.srcdir
         targetdir: self.targetdir
         """
-        pattern = eval('os.path.join(self.{}, pattern)'.format(basedir))
         print('Checking compatibility of headers for {}'.format(pattern))
         checklist = {}
-        for fn in glob.glob(pattern):
+        for fn in csvfiles:
             fbase = os.path.basename(fn)
             with open(fn, 'rb') as f:
                 checklist[fbase] = tuple(csv.reader(f, dialect='RFC4180').next())
@@ -148,9 +197,6 @@ class PrepareNADUF(object):
             print(incomp)
             print(len(incomp))
         
-        
-
-
     def extract_subtable(self, csvfile, row1=None, row2=None,
                          col1=None, col2=None, totxt=False):
         
@@ -166,6 +212,8 @@ class PrepareNADUF(object):
         res = []
         row1 = row1 or 1
         col1 = col1 or 1
+        if type(csvfile) == list:
+            csvfile = csvfile[0]
         with open(csvfile, 'rb') as f:
             readr = csv.reader(f, dialect='RFC4180')
             for c, row in enumerate(readr):
@@ -197,84 +245,68 @@ class PrepareNADUF(object):
         print('wrote {}'.format(outfile))
         return outfilepath
 
-    def apply_trafos(self, trans):
-        for t in trans:
-            expression = ('self.' + '(self.'.join(t['trans'][::-1]) +
-                          '("' + t['source'] + '"' + (len(t['trans']))*')')
-            eval(expression)
-        
-# Maps pathnames of source files to a list of transformation
-# functions, a function that returns a dict of resource-metadata,
-# and the final filename (to be written below self.targetdir)
-# copymap = {'Messmethoden/methods NADUF-english.pdf': {
-#     'transform': [],
-#     'target': 'methods_chemical_analysis.pdf',
-#     }
-
-
-metadata = {
-    'id': 'naduf',
-    'name': 'naduf',
-    'title': 'NADUF – National long-term surveillance of Swiss rivers',
-    'notes': '''The "National Long-term Surveillance of Swiss Rivers" (NADUF)
-program was initiated in 1972 as a cooperative project between three
-institutes: the [Federal Office for the Environment
-(BAFU)](https://www.bafu.admin.ch/index.html?lang=en), the Swiss
-Federal Institute of Aquatic Science and Technology (EAWAG) and since
-2003 the [Swiss Federal Institute for Forest, Snow and Landscape
-Research (WSL)](http://www.wsl.ch/index_EN).
-
-With the NADUF program, the chemical-physical state of Swiss rivers as
-well as intermediate-term and long-term changes in concentration are
-observed. Furthermore, it provides data for scientific studies on
-biological, chemical and physical processes in river water. The NADUF
-network serves as a basic data and sampling facility to evaluate the
-effectiveness of water protection measures and for various scientific
-projects.''',
-    'keywords': ['none'],
-    'variables': ['none'],
-    'generic-terms': ['none'],
-    'systems': ['none'],
-    'taxa': None,
-    'substances': None,
-    'timerange': '2017 TO 2222',
-    'spatial': '{}',
-    'geographic_name': None,
-    'owner_org': 'water-resources-and-drinking-water',
-    'private': False,
-    'status': 'incomplete',
-    'author': ['Ursula Schönenberger <ursula.schoenenberger@eawag.ch>',
-               'Stephan Hug <stephan.hug@eawag.ch>'],
-    'maintainer': 'Ursula Schönenberger <ursula.schoenenberger@eawag.ch>',
-    'usage_contact': 'Ursula Schönenberger <ursula.schoenenberger@eawag.ch>',
-    'open_data': ['open_data', 'doi_wanted', 'long_term_archive'],
-    'groups': [{'name': 'naduf-national-long-term-surveillance-of-swiss-rivers'}],
-    
-}
 
 
 
-P = PrepareNADUF(metadata, '/home/vonwalha/rdm/data/preparation/naduf')
+
+P = PrepareNADUF('/home/vonwalha/rdm/data/preparation/naduf')
 #P.action('package_create')
 #P.action('package_update')
 #P.action('package_delete')
 #P.action('dataset_purge')
 
 ## main data
-# dmain_tmp = P.extract_xlsx('Messdaten/Daten 2015.xlsx')
-# dmain1_tmp = P.extract_xlsx('Messdaten/Jahresmittel-2.xlsx')
+dmain_tmp = P.extract_xlsx(P.get_files('srcdir','Messdaten/Daten 2015.xlsx'))
+dmain1_tmp = P.extract_xlsx(P.get_files('srcdir', 'Messdaten/Jahresmittel-2.xlsx'))
+P.strip_csv(P.get_files('tmpdir', os.path.join(dmain_tmp, '*.csv')))
+P.strip_csv(P.get_files('tmpdir', os.path.join(dmain1_tmp, '*.csv')))
+P.crop_csv(P.get_files('tmpdir', os.path.join(dmain_tmp, '*.csv')))
+P.crop_csv(P.get_files('tmpdir', os.path.join(dmain1_tmp, '*.csv')))
 
 ## station information
-# dstations_tmp = P.extract_xlsx('Stationen/Stationszusammenstellung Jan17.xlsx')
+dstations_tmp = P.extract_xlsx(
+    P.get_files('srcdir','Stationen/Stationszusammenstellung Jan17.xlsx'))
+
+P.strip_csv(P.get_files('tmpdir', os.path.join(dstations_tmp, '*Quellen*.csv')),
+            killemptyrows=False)
+
+stations_description_legend = P.extract_subtable(
+    P.get_files('tmpdir', os.path.join(dstations_tmp, '*Quellen*.csv')),
+    7, 18, 1, 4)
+P.strip_csv(stations_description_legend)
+
+stations_description_sources = P.extract_subtable(
+    P.get_files('tmpdir', os.path.join(dstations_tmp, '*Quellen.csv')),
+    21, 38, 1, 3)
+P.strip_csv(stations_description_sources)
+
+stations_description_notes = P.extract_subtable(
+    P.get_files('tmpdir', os.path.join(dstations_tmp, '*Quellen.csv')),
+    1, 5, 1, 1, totxt=True)
+ 
+#XXX
+
+P.strip_csv(
+    P.get_files('tmpdir', os.path.join(dstations_tmp, '*Allgemeine*.csv'))
+    + P.get_files('tmpdir', os.path.join(dstations_tmp, '*Klassifikation*.csv')))
+
+P.crop_csv(
+    P.get_files('tmpdir', os.path.join(dstations_tmp, '*Allgemeine*.csv'))
+    + P.get_files('tmpdir', os.path.join(dstations_tmp, '*Klassifikation*.csv')))
+
 
 dnotes = P.mktmpdir()
 
-for f in P.getpaths('Hauptfiles (Instrument für mich)/*.xlsx'):
-    P.extract_xlsx(f, sheets=['Stoerungen','Logsheet'], tmpdir=dnotes)
-P.strip_csv('tmpdir', os.path.join(dnotes, '*.csv'))
+P.extract_xlsx(
+    P.get_files('srcdir', 'Hauptfiles (Instrument für mich)/*.xlsx'),
+    sheets=['Stoerungen','Logsheet'], tmpdir=dnotes)
+    
+P.strip_csv(P.get_files('tmpdir', os.path.join(dnotes, '*.csv')))
 
-P.check_column_compat('tmpdir', os.path.join(dnotes, '*Stoerungen.csv'))
-P.check_column_compat('tmpdir', os.path.join(dnotes, '*Logsheet.csv'))
+P.check_column_compat(P.get_files('tmpdir',
+                                  os.path.join(dnotes, '*Stoerungen.csv')))
+P.check_column_compat(P.get_files('tmpdir',
+                                  os.path.join(dnotes, '*Logsheet.csv')))
 
 sys.exit()
 
@@ -325,3 +357,46 @@ ftocopy = [
            # row1 = 26
            # row2 = None
            # res = P.extract_subtable(csvfile, row1, row2, 3, None)
+metadata = {
+    'id': 'naduf',
+    'name': 'naduf',
+    'title': 'NADUF – National long-term surveillance of Swiss rivers',
+    'notes': '''The "National Long-term Surveillance of Swiss Rivers" (NADUF)
+program was initiated in 1972 as a cooperative project between three
+institutes: the [Federal Office for the Environment
+(BAFU)](https://www.bafu.admin.ch/index.html?lang=en), the Swiss
+Federal Institute of Aquatic Science and Technology (EAWAG) and since
+2003 the [Swiss Federal Institute for Forest, Snow and Landscape
+Research (WSL)](http://www.wsl.ch/index_EN).
+
+With the NADUF program, the chemical-physical state of Swiss rivers as
+well as intermediate-term and long-term changes in concentration are
+observed. Furthermore, it provides data for scientific studies on
+biological, chemical and physical processes in river water. The NADUF
+network serves as a basic data and sampling facility to evaluate the
+effectiveness of water protection measures and for various scientific
+projects.''',
+    'keywords': ['none'],
+    'variables': ['none'],
+    'generic-terms': ['none'],
+    'systems': ['none'],
+    'taxa': None,
+    'substances': None,
+    'timerange': '2017 TO 2222',
+    'spatial': '{}',
+    'geographic_name': None,
+    'owner_org': 'water-resources-and-drinking-water',
+    'private': False,
+    'status': 'incomplete',
+    'author': ['Ursula Schönenberger <ursula.schoenenberger@eawag.ch>',
+               'Stephan Hug <stephan.hug@eawag.ch>'],
+    'maintainer': 'Ursula Schönenberger <ursula.schoenenberger@eawag.ch>',
+    'usage_contact': 'Ursula Schönenberger <ursula.schoenenberger@eawag.ch>',
+    'open_data': ['open_data', 'doi_wanted', 'long_term_archive'],
+    'groups': [{'name': 'naduf-national-long-term-surveillance-of-swiss-rivers'}],
+    
+}
+
+with open('metadata.json', 'w') as f:
+    json.dump(metadata, f, indent=4, separators=(',', ':'))
+
