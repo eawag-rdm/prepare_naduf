@@ -264,8 +264,6 @@ class PrepareNADUF(object):
 
 
 
-
-
 P = PrepareNADUF('/home/vonwalha/rdm/data/preparation/naduf')
 #P.action('package_create')
 #P.action('package_update')
@@ -284,52 +282,45 @@ P.crop_csv(P.get_files('tmpdir', os.path.join(dmain1_tmp, '*.csv')))
 dstations_tmp = P.extract_xlsx(
     P.get_files('srcdir','Stationen/Stationszusammenstellung Jan17.xlsx'))
 
-P.strip_csv(P.get_files('tmpdir', os.path.join(dstations_tmp, '*Quellen*.csv')),
-            killemptyrows=False)
+### Sheet "Bemerkungen Quellen"
+notes_sources = P.get_files('tmpdir', os.path.join(dstations_tmp, '*Quellen*.csv'))
+P.strip_csv(notes_sources, killemptyrows=False)
 
-stations_description_legend = P.extract_subtable(
-    P.get_files('tmpdir', os.path.join(dstations_tmp, '*Quellen*.csv')),
-    7, 18, 1, 4)
+stations_description_legend = P.extract_subtable(notes_sources, 7, 18, 1, 4)
 P.strip_csv(stations_description_legend)
 P.crop_csv(stations_description_legend)
 
-stations_description_sources = P.extract_subtable(
-    P.get_files('tmpdir', os.path.join(dstations_tmp, '*Quellen.csv')),
-    21, 38, 1, 3)
+stations_description_sources = P.extract_subtable(notes_sources, 21, 38, 1, 3)
 P.strip_csv(stations_description_sources)
 P.crop_csv(stations_description_sources)
 
-stations_description_notes = P.extract_subtable(
-    P.get_files('tmpdir', os.path.join(dstations_tmp, '*Quellen.csv')),
-    1, 5, 1, 1, totxt=True)
- 
-P.strip_csv(
-    P.get_files('tmpdir', os.path.join(dstations_tmp, '*Allgemeine*.csv'))
-    + P.get_files('tmpdir', os.path.join(dstations_tmp, '*Klassifikation*.csv')))
+stations_description_notes = P.extract_subtable(notes_sources, 1, 5, 1, 1,
+                                                totxt=True)
 
-P.crop_csv(
+### Sheet "Allgemeine Daten
+general_data_and_classifications = (
     P.get_files('tmpdir', os.path.join(dstations_tmp, '*Allgemeine*.csv'))
-    + P.get_files('tmpdir', os.path.join(dstations_tmp, '*Klassifikation*.csv')))
+    + P.get_files('tmpdir', os.path.join(dstations_tmp, '*Klassifikation*.csv'))
+)
+P.strip_csv(general_data_and_classifications)
+P.crop_csv(general_data_and_classifications)
 
 ## Logfiles and Stoerungen
 dnotes = P.mktmpdir()
-
 P.extract_xlsx(
     P.get_files('srcdir', 'Hauptfiles (Instrument für mich)/*.xlsx'),
     sheets=['Stoerungen','Logsheet'], tmpdir=dnotes)
-    
-P.strip_csv(P.get_files('tmpdir', os.path.join(dnotes, '*.csv')))
-P.crop_csv(P.get_files('tmpdir', os.path.join(dnotes, '*.csv')))
+stoerungen = P.get_files('tmpdir', os.path.join(dnotes, '*Stoerungen.csv'))
+logsheets = P.get_files('tmpdir', os.path.join(dnotes, '*Logsheet.csv'))
+P.strip_csv(stoerungen + logsheets)
+P.crop_csv(stoerungen + logsheets)
+P.check_column_compat(stoerungen)
+P.check_column_compat(logsheets)
 
-P.check_column_compat(
-    P.get_files('tmpdir', os.path.join(dnotes, '*Stoerungen.csv')))
-P.check_column_compat(
-    P.get_files('tmpdir', os.path.join(dnotes, '*Logsheet.csv')))
-logfile = P.cat_csv(
-    P.get_files('tmpdir', os.path.join(dnotes, '*Logsheet.csv')), 'log.csv')
-stoerfile = P.cat_csv(
-    P.get_files('tmpdir', os.path.join(dnotes, '*Stoerungen.csv')), 'stoer.csv')
+logfile = P.cat_csv(logsheets, 'log.csv')
+stoerfile = P.cat_csv(stoerungen, 'stoer.csv')
 
+#>>1
 ## copy files:
 ftocopy = [
     (P.check_pdf_A('Messmethoden/methods NADUF-english.pdf'),
