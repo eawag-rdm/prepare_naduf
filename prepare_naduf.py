@@ -24,7 +24,7 @@ import json
 ## java -jar $HOME/java/lib/preflight-app-2.0.4.jar "$1"
 
 
-# measurement methods
+
 
 class PrepareNADUF(object):
     def __init__(self, basedir):
@@ -39,24 +39,6 @@ class PrepareNADUF(object):
         
         self.connection = self.connect()
         
-        
-    def connect(self):
-        return ckanapi.RemoteCKAN(self.remote, apikey=self.apikey)
-        
-    def get_apikey(self):
-        apikey = os.environ['CKAN_APIKEY']
-        return apikey
-
-    def action(self, action):
-        metadata = self.prep_meta(action)
-        res = self.connection.call_action(action, metadata)
-        print(res)
-        
-    def prep_meta(self, action):
-        if action == 'package_delete' or action == 'dataset_purge':
-            return {'id': self.metadata.get('id', None) or
-                    self.metadata['name']}
-        return self.metadata
 
     def check_pdf_A(self, pdffile):
         pdffilepath = os.path.join(self.srcdir, pdffile)
