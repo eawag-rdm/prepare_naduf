@@ -85,9 +85,9 @@ class PrepareNADUF(object):
             print('converted {} to PDF/A'.format(pdffile, outfile))
             return(outfilepath)
                 
-    def cpfile(self, source, dest):
-        src = os.path.join(self.srcdir, source)
-        target = os.path.join(self.targetdir, dest)
+    def cpfile(self, basedir, srcfn, destfn):
+        src = eval('os.path.join(self.{}, srcfn)'.format(basedir))
+        target = os.path.join(self.targetdir, destfn)
         shutil.copyfile(src, target)
         print('Copied {}\n->{}'.format(src, target))
         return target
@@ -320,12 +320,13 @@ P.check_column_compat(logsheets)
 logfile = P.cat_csv(logsheets, 'log.csv')
 stoerfile = P.cat_csv(stoerungen, 'stoer.csv')
 
-#>>1
+sys.exit()
 ## copy files:
 ftocopy = [
     (P.check_pdf_A('Messmethoden/methods NADUF-english.pdf'),
      'methods_chemical_analysis.pdf'),
     (P.check_pdf_A('ReadMe.pdf'), 'measurements_notes.pdf'),
+    
     (os.path.join(dmain_tmp, 'Daten 2015_Onelinemessung.csv'),
      'hourly_measurements_1990-1998.csv'),
     (os.path.join(dmain_tmp, 'Daten 2015_Originaldaten.csv'),
