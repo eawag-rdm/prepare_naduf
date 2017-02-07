@@ -5,6 +5,10 @@ import json
 # _*_ coding: utf-8 _*_
 
 class CKANComm(object):
+    """A very thin wrapper around ckanapi for modifying the state of a
+    remote CKAN instance based on information in a metadata-file.
+    """
+    
     def __init__(self, metafile, remote='http://localhost:5000'):
         self.apikey = self.get_apikey()
         self.remote = remote
