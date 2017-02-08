@@ -5,7 +5,10 @@ import logging
 from xlsxtocsv import xlsxtocsv, rfc4180
 from glob import glob
 import tempfile
+import csv
 
+
+logging.basicConfig(level=logging.INFO)
 
 try:
     type(basestring)
@@ -38,22 +41,37 @@ class CSVFiles(object):
     def __init__(self, fpaths=None):
         self.toc = []
         if fpaths:
-            self._initcsvlist(fpaths)
+            self.addcsvlist(fpaths)
         rfc4180.RFC4180() # register dialect
         self.tempdirs = []
 
-    def _initcsvlist(self, fpaths):
-        if not type(fpaths) == list:
-                fpaths = [fpaths]
-        fobs = [self._tofob(fi) for fi in fpaths]
-        
-        names = [os.path.basename(fob.name) for fob in fobs]
-        histories = [[('init', fp)] for fp in fpaths]
-        self.toc = [{'name': nam, 'fobject': fob, 'history': hist}
-                    for nam, fob, hist in zip(names, fobs, histories)]
+    def _readfiles(self, flist):
+        if not type(flist) == list:
+            flist = [flist]
+        fobs = [self._tofob(fi) for fi in flist]
+        return (flist, fobs)
 
+    def addcsvlist(self, fpaths):
+        flist, fobs = self._readfiles(fpaths)
+        names = [os.path.basename(fob.name) for fob in fobs]
+        histories = [[('init', str(fp))] for fp in flist]
+        extension = [{'name': nam, 'fobject': fob, 'history': hist}
+                         for nam, fob, hist in zip(names, fobs, histories)]
+        print("oldtoc: {}".format(self.toc))
+        print('extension:')
+        print(extension)
+        self.toc = self.toc + extension
+        print("extended: {}".format(self.toc))
+        
+
+    def resetfiles(self):
+        for fob in [r['fobject'] for r in self.toc]:
+            fob.flush()
+            fob.seek(0)
+    
     def _tofob(self, f):
-        if all([hasattr(f, att) for att in ['read', 'write', 'mode']]):
+        if all([hasattr(f, att) for att in ['read', 'write', 'seek']]):
+            f.seek(0)
             return f
         else:
             return open(f, 'rb')
@@ -64,10 +82,14 @@ class CSVFiles(object):
         logging.info('Extracting data from {} ...'.format(xlsxfile))
         xlsxtocsv.main(xlsxfile, out_dir, sheets=sheets)
         outfiles = glob(os.path.join(out_dir, '*.csv'))
-        self._initcsvlist(outfiles)
+        self.addcsvlist(outfiles)
         for i, fn in enumerate([r['fobject'].name for r in self.toc]):
             if fn in outfiles:
-                self.toc[i]['history'].insert(0, ('init_xlsx', xlsxfile))
+                self.toc[i]['history'].insert(
+                    0, ('init_xlsx', ' '.join([xlsxfile, str(sheets)])))
+                print(self.toc[i]['history'])
+        return self
+       
 
     def strip_csv(self, names=None, killemptyrows=True):
         """Strips leading and trailing whitespace from cells.
@@ -87,10 +109,10 @@ class CSVFiles(object):
         else:
             idx = range(0, len(self.toc))
                 
-        for irec in [r for i, r in enumerate(self.tocidx) if i in idx]:
+        for irec in [r for i, r in enumerate(self.toc) if i in idx]:
             logging.info('{}:\nStripping leading and trailing whitespace '
                          + 'from cells'.format(self.toc[i]['name']))
-            ftmp = tempfile.SpooledTemporaryFile(max_size=1048576, mode='w+b')
+            ftmp = tempfile.NamedTemporaryFile(mode='w+b')
             tmpwriter = csv.writer(ftmp, dialect='RFC4180')
             for i, row in enumerate(csv.reader(
                     irec['fobject'], dialect='RFC4180')):
@@ -102,9 +124,10 @@ class CSVFiles(object):
                                     else c for c in row ])
             ftmp.flush()
             ftmp.seek(0)
-            irec['fileobj'].close()
-            irec['fileobj'] = ftmp
-            irec['history'] += ('strip_csv', names)
+            irec['fobject'].close()
+            irec['fobject'] = ftmp
+            irec['history'] += [('strip_csv', ftmp.name)]
+        return self
     
 
 # class PrepareNADUF(object):
